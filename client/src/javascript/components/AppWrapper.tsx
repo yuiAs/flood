@@ -1,6 +1,6 @@
 import classnames from 'classnames';
 import {CSSTransition} from 'react-transition-group';
-import {FC, ReactNode} from 'react';
+import {FC, ReactNode, useEffect} from 'react';
 import {observer} from 'mobx-react-lite';
 import {useEffectOnce} from 'react-use';
 import {useNavigate} from 'react-router';
@@ -23,6 +23,12 @@ interface AppWrapperProps {
   className?: string;
 }
 
+// Helper function to check if a string is a valid torrent URL
+const isTorrentURL = (text: string): boolean => {
+  const trimmedText = text.trim();
+  return trimmedText.startsWith('magnet:') || trimmedText.startsWith('http://') || trimmedText.startsWith('https://');
+};
+
 const AppWrapper: FC<AppWrapperProps> = observer(({children, className}: AppWrapperProps) => {
   const navigate = useNavigate();
 
@@ -42,6 +48,81 @@ const AppWrapper: FC<AppWrapperProps> = observer(({children, className}: AppWrap
       },
     );
   });
+
+  // Handle URL paste events
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      // Don't interfere if user is pasting into an input/textarea element
+      const target = event.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return;
+      }
+
+      // Get pasted text
+      const pastedText = event.clipboardData?.getData('text');
+      if (!pastedText) {
+        return;
+      }
+
+      // Check if it's a torrent URL
+      if (isTorrentURL(pastedText)) {
+        event.preventDefault();
+        UIStore.setActiveModal({
+          id: 'add-torrents',
+          tab: 'by-url',
+          urls: [{id: 0, value: pastedText.trim()}],
+        });
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, []);
+
+  // Handle URL drag-and-drop events
+  useEffect(() => {
+    const handleDragOver = (event: DragEvent) => {
+      // Check if dragging contains text/url
+      const hasText =
+        event.dataTransfer?.types.includes('text/plain') || event.dataTransfer?.types.includes('text/uri-list');
+
+      if (hasText) {
+        event.preventDefault();
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect = 'copy';
+        }
+      }
+    };
+
+    const handleDrop = (event: DragEvent) => {
+      // Get dropped text/URL
+      const droppedText = event.dataTransfer?.getData('text/plain') || event.dataTransfer?.getData('text/uri-list');
+
+      if (!droppedText) {
+        return;
+      }
+
+      // Check if it's a torrent URL
+      if (isTorrentURL(droppedText)) {
+        event.preventDefault();
+        UIStore.setActiveModal({
+          id: 'add-torrents',
+          tab: 'by-url',
+          urls: [{id: 0, value: droppedText.trim()}],
+        });
+      }
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, []);
 
   if (searchParams.has('action')) {
     if (searchParams.get('action') === 'add-urls') {
