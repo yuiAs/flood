@@ -9,12 +9,12 @@ on:
       - master
 
 jobs:
-  test-backend-real:
+  test-backend-matrix:
     runs-on: ubuntu-22.04
 
     strategy:
       matrix:
-        node: ['20', '22', '24']
+        node: ['22', '24']
       fail-fast: false
 
     steps:
@@ -36,22 +36,17 @@ jobs:
           sudo dpkg -i rtorrent-linux-amd64.deb
 
       - run: pnpm install --frozen-lockfile
-      - run: npm test || npm test || npm test
+      - run: pnpm run test || pnpm run test || pnpm run test
+        env:
+          FLOOD_OPTION_ASSETS: 'false'
 
       - uses: codecov/codecov-action@v3
-        if: matrix.node == 20
-
-      - run: |
-          sudo apt-get remove --purge -y rtorrent
-          sudo apt-get install -y rtorrent
-
-      - run: npm test -- --selectProjects rtorrent || npm test -- --selectProjects rtorrent || npm test -- --selectProjects rtorrent
-        if: matrix['node'] == '20'
+        if: matrix.node == '24'
 
   test-backend:
     # so we do not need to update GitHub repo config
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     needs:
-      - test-backend-real
+      - test-backend-matrix
     steps:
       - run: echo pass

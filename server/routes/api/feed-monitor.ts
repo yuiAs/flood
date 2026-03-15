@@ -1,161 +1,212 @@
-import type {AddFeedOptions, AddRuleOptions, ModifyFeedOptions} from '@shared/types/api/feed-monitor';
-import express, {Response} from 'express';
+import {
+  addFeedSchema,
+  addRuleSchema,
+  feedIdOptionalParamSchema,
+  feedIdParamSchema,
+  feedItemsQuerySchema,
+  modifyFeedSchema,
+} from '@shared/schema/api/feed-monitor';
+import type {FastifyInstance} from 'fastify';
+import {ZodTypeProvider} from 'fastify-type-provider-zod';
+import {z} from 'zod';
 
 import {accessDeniedError, isAllowedPath, sanitizePath} from '../../util/fileUtil';
+import {getAuthedContext} from './requestContext';
 
-const router = express.Router();
+const feedMonitorRoutes = async (fastify: FastifyInstance) => {
+  const typedFastify = fastify.withTypeProvider<ZodTypeProvider>();
+  const errorResponseSchema = z
+    .object({
+      code: z.string().optional(),
+      message: z.string().optional(),
+    })
+    .strict();
 
-/**
- * GET /api/feed-monitor
- * @summary Gets subscribed feeds and their automation rules
- * @tags Feeds
- * @security User
- * @return {{feeds: Array<Feed>; rules: Array<Rule>}} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.get(
-  '/',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.getAll().then(
-      (feedsAndRules) => res.status(200).json(feedsAndRules),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * DELETE /api/feed-monitor/{id}
- * @summary Deletes feed subscription or automation rule
- * @tags Feeds
- * @security User
- * @param id.path - Unique ID of the item
- * @return {} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.delete<{id: string}>(
-  '/:id',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.removeItem(req.params.id).then(
-      (response) => res.status(200).json(response),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * GET /api/feed-monitor/feeds/{id?}
- * @summary Gets subscribed feeds
- * @tags Feeds
- * @security User
- * @param id.path.optional - Unique ID of the feed subscription
- * @return {Array<Feed>}} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.get<{id?: string}>(
-  '/feeds/:id?',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.getFeeds(req.params.id).then(
-      (feeds) => res.status(200).json(feeds),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * PUT /api/feed-monitor/feeds
- * @summary Subscribes to a feed
- * @tags Feeds
- * @security User
- * @param {AddFeedOptions} request.body.required - options - application/json
- * @return {Feed} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.put<unknown, unknown, AddFeedOptions>(
-  '/feeds',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.addFeed(req.body).then(
-      (feed) => res.status(200).json(feed),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * PATCH /api/feed-monitor/feeds/{id}
- * @summary Modifies the options of a feed subscription
- * @tags Feeds
- * @security User
- * @param id.path - Unique ID of the feed subscription
- * @param {ModifyFeedOptions} request.body.required - options - application/json
- * @return {} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.patch<{id: string}, unknown, ModifyFeedOptions>(
-  '/feeds/:id',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.modifyFeed(req.params.id, req.body).then(
-      (response) => res.status(200).json(response),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * GET /api/feed-monitor/feeds/{id}/items?search=<string>
- * @summary Gets items in a feed
- * @tags Feeds
- * @security User
- * @param id.path - Unique ID of the feed subscription
- * @param {string} search.query - string to search in items
- * @return {Array<Item>} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.get<{id: string}, unknown, ModifyFeedOptions, {search: string}>(
-  '/feeds/:id/items',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.getItems(req.params.id, req.query.search).then(
-      (items) => res.status(200).json(items),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * GET /api/feed-monitor/rules
- * @summary Gets automation rules
- * @tags Feeds
- * @security User
- * @return {Array<Rule>}} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.get(
-  '/rules',
-  async (req, res): Promise<Response> =>
-    req.services.feedService.getRules().then(
-      (rules) => res.status(200).json(rules),
-      ({code, message}) => res.status(500).json({code, message}),
-    ),
-);
-
-/**
- * PUT /api/feed-monitor/rules
- * @summary Adds an automation rule to a feed subscription
- * @tags Feeds
- * @security User
- * @param {AddRuleOptions} request.body.required - options - application/json
- * @return {Rule} 200 - success response - application/json
- * @return {Error} 500 - failure response - application/json
- */
-router.put<unknown, unknown, AddRuleOptions>('/rules', async (req, res): Promise<Response> => {
-  let sanitizedPath: string | null = null;
-  try {
-    sanitizedPath = sanitizePath(req.body.destination);
-    if (!isAllowedPath(sanitizedPath)) {
-      const {code, message} = accessDeniedError();
-      return res.status(403).json({code, message});
-    }
-  } catch ({code, message}) {
-    return res.status(403).json({code, message});
-  }
-
-  return req.services.feedService.addRule({...req.body, destination: sanitizedPath}).then(
-    (rule) => res.status(200).json(rule),
-    ({code, message}) => res.status(500).json({code, message}),
+  typedFastify.get(
+    '/',
+    {
+      schema: {
+        summary: 'Get feeds and rules',
+        description: 'Fetch all feeds and rules.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.getAll();
+    },
   );
-});
 
-export default router;
+  typedFastify.delete(
+    '/:id',
+    {
+      schema: {
+        summary: 'Delete feed',
+        description: 'Remove a feed by id.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        params: feedIdParamSchema,
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.removeItem(request.params.id);
+    },
+  );
+
+  typedFastify.get(
+    '/feeds/:id?',
+    {
+      schema: {
+        summary: 'Get feeds',
+        description: 'Fetch feeds, optionally filtered by id.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        params: feedIdOptionalParamSchema,
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.getFeeds(request.params.id);
+    },
+  );
+
+  typedFastify.put(
+    '/feeds',
+    {
+      schema: {
+        summary: 'Add feed',
+        description: 'Add a new feed.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        body: addFeedSchema,
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.addFeed(request.body);
+    },
+  );
+
+  typedFastify.patch(
+    '/feeds/:id',
+    {
+      schema: {
+        summary: 'Modify feed',
+        description: 'Update a feed by id.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        body: modifyFeedSchema,
+        params: feedIdParamSchema,
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.modifyFeed(request.params.id, request.body);
+    },
+  );
+
+  typedFastify.get(
+    '/feeds/:id/items',
+    {
+      schema: {
+        summary: 'Get feed items',
+        description: 'Fetch items for a feed by id.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        params: feedIdParamSchema,
+        querystring: feedItemsQuerySchema,
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.getItems(request.params.id, request.query.search ?? '');
+    },
+  );
+
+  typedFastify.get(
+    '/rules',
+    {
+      schema: {
+        summary: 'Get rules',
+        description: 'Fetch all rules.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        response: {
+          200: z.unknown(),
+        },
+      },
+    },
+    async (request) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      return services.feedService.getRules();
+    },
+  );
+
+  typedFastify.put(
+    '/rules',
+    {
+      schema: {
+        summary: 'Add rule',
+        description: 'Add a new rule for feeds.',
+        tags: ['Feeds'],
+        security: [{User: []}],
+        body: addRuleSchema,
+        response: {
+          200: z.unknown(),
+          403: errorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const authedContext = getAuthedContext(request);
+      const {services} = authedContext;
+      let sanitizedPath: string | null = null;
+      try {
+        sanitizedPath = sanitizePath(request.body.destination);
+        if (!isAllowedPath(sanitizedPath)) {
+          const {code, message} = accessDeniedError();
+          reply.status(403).send({code, message});
+          return;
+        }
+      } catch ({code, message}) {
+        reply.status(403).send({code, message});
+        return;
+      }
+
+      const rule = await services.feedService.addRule({
+        ...request.body,
+        destination: sanitizedPath,
+      });
+      return rule;
+    },
+  );
+};
+
+export default feedMonitorRoutes;
