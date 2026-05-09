@@ -39,6 +39,10 @@ node_modules/
 # dotenv environment variables file
 .env
 
+# docker-compose runtime state
+docker-compose.yml
+data/
+
 # macOS custom attributes
 .DS_Store
 

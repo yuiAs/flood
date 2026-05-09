@@ -1,0 +1,66 @@
+# Flood web UI, configured to talk to the rtorrent container shipped at
+# ./rtorrent.
+#
+# Prerequisites
+#   1. Create the shared network once:
+#        docker network create torrent-net
+#   2. Add the same network to the rtorrent compose (services.rtorrent and a
+#      top-level networks: block referencing it as external).
+#   3. Copy .env.example to .env and adjust paths if your rtorrent host dirs
+#      live elsewhere.
+#
+# Why the volumes look the way they do
+#   Flood performs file operations (move, delete, set-file-priority) by path,
+#   and those paths must resolve to the *same* bytes that rtorrent sees. So
+#   the host directory backing rtorrent's /data/download MUST be mounted at
+#   /data/download here too — not under a different prefix.
+
+services:
+  flood:
+    build:
+      context: .
+    image: flood:local
+    container_name: flood
+    restart: unless-stopped
+
+    environment:
+      TZ: Asia/Tokyo
+
+    volumes:
+      # Flood's own state: users.db, settings.db, temp/, flood.secret.
+      # Named volume keeps the rundir writable by the unprivileged `node`
+      # user without a chown dance on the host.
+      - flood-data:/var/lib/flood
+      # Mirror rtorrent's mounts at identical container paths. Download is
+      # read-write (Flood manages files); session is read-only (Flood only
+      # needs to read .torrent / resume data when adding torrents that
+      # reference paths inside it).
+      - ${RTORRENT_DOWNLOAD_DIR}:/data/download
+      - ${RTORRENT_SESSION_DIR}:/data/session:ro
+
+    # Bind to localhost only — front this with a reverse proxy if exposing
+    # beyond the host. Drop the 127.0.0.1: prefix to publish on all interfaces.
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    command:
+      - --port=3000
+      - --rundir=/var/lib/flood
+      - --allowedpath=/data/download
+
+    networks:
+      - rtorrent-flood-network
+
+    # Flood reaches rtorrent via SCGI on the shared network. Configure the
+    # connection in Flood's web UI as:
+    #   type:    rTorrent
+    #   socket:  TCP
+    #   host:    rtorrent
+    #   port:    5000
+
+networks:
+  rtorrent-flood-network:
+    external: true
+
+volumes:
+  flood-data:

@@ -1,66 +1,44 @@
-# WARNING:
+# syntax=docker/dockerfile:1.6
 #
-# For development and debugging only. Use Dockerfile.release for production.
-#
-# This image bundles rTorrent for easier debugging. It is not started by default.
-# Use --rtorrent argument if you wish to start the bundled rTorrent.
-# For production, use rtorrent-flood instead.
-#
-# This Dockerfile uses contents of current folder which might contain
-# secrets, uncommitted changes or other sensitive information. DO NOT
-# publish the result image unless it was composed in a clean environment.
+# Production image for Flood. The bundled-rtorrent variant was removed:
+# run rtorrent in its own container and connect Flood to it over SCGI.
 
-ARG BUILDPLATFORM=amd64
 ARG NODE_IMAGE=docker.io/node:24-alpine
 
-FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS nodebuild
+# ---------- build ----------
+FROM ${NODE_IMAGE} AS build
 
-WORKDIR /usr/src/app/
+WORKDIR /usr/src/app
 
-# Copy project files
+# Use the pnpm version pinned by `packageManager` in package.json.
+RUN corepack enable
+
 COPY . ./
 
-RUN npm i -g corepack && corepack enable && corepack install
+RUN pnpm install --frozen-lockfile \
+ && pnpm run build
 
-# Fetch dependencies from npm
-RUN pnpm install --frozen-lockfile
+# ---------- runtime ----------
+FROM ${NODE_IMAGE} AS runtime
 
-# Build assets
-RUN npm run build
+WORKDIR /usr/src/app
 
-# Now get the clean Node.js image
-FROM ${NODE_IMAGE} AS flood
+# mediainfo: optional dependency used by Flood for media file inspection.
+# The `node` user (uid/gid 1000) already exists in the base image, which is
+# convenient: it matches the PUID/PGID 1000 the rtorrent container expects,
+# so files written by either side share ownership on the host.
+RUN apk --no-cache add mediainfo
 
-WORKDIR /usr/src/app/
+# esbuild bundles the server into dist/index.js with `geoip-country` left
+# external, so node_modules is still required at runtime.
+COPY --from=build --chown=node:node /usr/src/app /usr/src/app
 
-# Copy sources
-COPY --from=nodebuild /usr/src/app ./
+# Pre-create rundir so a named volume mounted here inherits node ownership
+# instead of getting created root-owned on first run.
+RUN install -d -o node -g node /var/lib/flood
 
-# Install runtime dependencies
-RUN apk --no-cache add \
-    mediainfo
+USER node
 
-# Create "download" user
-RUN adduser -h /home/download -s /sbin/nologin --disabled-password download
-
-# Run as "download" user
-USER download
-
-# Expose port 3000 and 4200
 EXPOSE 3000
-EXPOSE 4200
 
-# Flood server in development mode
-ENTRYPOINT ["npm", "--prefix=/usr/src/app/", "run", "start", "--", "--host=::"]
-
-# Then, to start a debugging session of frontend:
-# docker exec -it ${container_id} npm --prefix=/usr/src/app/ run start:development:client
-
-# rtorrent-flood image
-FROM docker.io/jesec/rtorrent:master AS rtorrent
-FROM flood AS rtorrent-flood
-
-# Copy rTorrent
-COPY --from=rtorrent / /
-
-ENTRYPOINT ["npm", "--prefix=/usr/src/app/", "run", "start", "--", "--host=::", "--rtorrent"]
+ENTRYPOINT ["node", "--enable-source-maps", "--use_strict", "dist/index.js", "--host=::"]
