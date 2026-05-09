@@ -1,11 +1,15 @@
-import type {NextFunction, Request, Response} from 'express';
+import type {FastifyReply, FastifyRequest} from 'fastify';
 
 import {AccessLevel} from '../../shared/schema/constants/Auth';
+import {AdminRequiredError, UnauthorizedError} from '../errors';
+import {getAuthContext} from './authenticate';
 
-export default (req: Request, res: Response, next: NextFunction) => {
-  if (req.user == null || req.user.level !== AccessLevel.ADMINISTRATOR) {
-    res.status(403).json({message: 'User is not admin.'}).send();
-    return;
+export default async (req: FastifyRequest, _reply: FastifyReply): Promise<void> => {
+  const auth = getAuthContext(req);
+  if (auth == null) {
+    throw new UnauthorizedError();
   }
-  next();
+  if (auth.user.level !== AccessLevel.ADMINISTRATOR) {
+    throw new AdminRequiredError();
+  }
 };

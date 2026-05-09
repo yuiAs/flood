@@ -31,7 +31,7 @@ import {move} from 'fs-extra';
 import sanitize from 'sanitize-filename';
 
 import {fetchUrls} from '../../util/fetchUtil';
-import {isAllowedPath, sanitizePath} from '../../util/fileUtil';
+import {cleanupEmptyDirectories, isAllowedPath, sanitizePath} from '../../util/fileUtil';
 import {getComment, setCompleted, setTrackers} from '../../util/torrentFileUtil';
 import ClientGatewayService from '../clientGatewayService';
 import * as geoip from '../geoip';
@@ -57,7 +57,40 @@ import {
 
 class RTorrentClientGatewayService extends ClientGatewayService {
   clientRequestManager = new ClientRequestManager(this.user.client as RTorrentConnectionSettings);
-  availableMethodCalls = this.fetchAvailableMethodCalls(true);
+  availableMethodCalls = this.fetchAvailableMethodCalls();
+
+  // workaround: rTorrent instances might reject large d.multicall2 JSON-RPC requests
+  // even though the equivalent XML-RPC call succeeds. rakshasa/rtorrent#1596
+  private async fetchTorrentListResponses() {
+    const methodCalls = ['', 'main'].concat((await this.availableMethodCalls).torrentList);
+
+    try {
+      return await this.clientRequestManager
+        .methodCall('d.multicall2', methodCalls)
+        .then(this.processClientRequestSuccess, this.processRTorrentRequestError);
+    } catch (error) {
+      if (!this.clientRequestManager.isJSONCapable || (error as RPCError)?.code !== -32700) {
+        throw error;
+      }
+
+      this.clientRequestManager.isJSONCapable = false;
+      return this.clientRequestManager
+        .methodCall('d.multicall2', methodCalls)
+        .then(this.processClientRequestSuccess, this.processRTorrentRequestError);
+    }
+  }
+
+  async getPreferredMethod(methods: string[]): Promise<string> {
+    const {methodList} = await this.availableMethodCalls;
+
+    const matchedMethod = methods.find((method) => methodList.includes(method));
+
+    if (!matchedMethod) {
+      throw new Error(`None of the requested methods are available: ${methods.join(', ')}`);
+    }
+
+    return matchedMethod;
+  }
 
   async appendTorrentCommentCall(file: string, additionalCalls: string[]) {
     const comment = await getComment(Buffer.from(file, 'base64'));
@@ -106,11 +139,15 @@ class RTorrentClientGatewayService extends ClientGatewayService {
     const result: string[] = [];
 
     if (this.clientRequestManager.isJSONCapable) {
+      const methodName = await this.getPreferredMethod(
+        start ? ['load.start_throw', 'load.start'] : ['load.throw', 'load.normal'],
+      );
+
       await this.clientRequestManager
         .methodCall('system.multicall', [
           await Promise.all(
             processedFiles.map(async (file) => ({
-              methodName: start ? 'load.start' : 'load.normal',
+              methodName,
               params: [
                 '',
                 `data:applications/x-bittorrent;base64,${file}`,
@@ -158,30 +195,31 @@ class RTorrentClientGatewayService extends ClientGatewayService {
 
     const result: string[] = [];
 
+    const additionalCalls = getAddTorrentPropertiesCalls({
+      destination,
+      isBasePath,
+      isSequential,
+      isInitialSeeding,
+      tags,
+    });
+
     if (urls[0]) {
-      let methodName: string;
-      if (this.clientRequestManager.isJSONCapable) {
-        methodName = start ? 'load.start_throw' : 'load.throw';
-      } else {
-        methodName = start ? 'load.start' : 'load.normal';
-      }
+      const methodName = await this.getPreferredMethod(
+        start ? ['load.start_throw', 'load.start'] : ['load.throw', 'load.normal'],
+      );
 
       await this.clientRequestManager
         .methodCall('system.multicall', [
           urls.map((url) => ({
             methodName,
-            params: [
-              '',
-              url,
-              ...getAddTorrentPropertiesCalls({destination, isBasePath, isSequential, isInitialSeeding, tags}),
-            ],
+            params: ['', url, ...additionalCalls],
           })),
         ])
-        .then(this.processClientRequestSuccess, this.processRTorrentRequestError)
-        .then((response: Array<Array<string | number>>) => {
-          const hashes = response.flat(2).filter((value) => typeof value === 'string') as string[];
-          result.push(...hashes);
-        });
+        .then(this.processClientRequestSuccess, this.processRTorrentRequestError);
+      // .then((response: Array<Array<string | number>>) => {
+      //   const hashes = response.flat(2).filter((value) => typeof value === 'string') as string[];
+      //   result.push(...hashes);
+      // });
     }
 
     if (files[0]) {
@@ -194,9 +232,10 @@ class RTorrentClientGatewayService extends ClientGatewayService {
         isSequential,
         isInitialSeeding,
         start,
-      }).then((hashes) => {
-        result.push(...hashes);
       });
+      // .then((hashes) => {
+      //   result.push(...hashes);
+      // });
     }
 
     return result;
@@ -323,13 +362,33 @@ class RTorrentClientGatewayService extends ClientGatewayService {
             ? path.resolve(isBasePath ? destination : path.join(destination, name))
             : path.resolve(destination);
 
-          if (sourceDirectory !== destDirectory) {
-            if (isMultiFile[index]) {
-              await move(sourceDirectory, destDirectory, {overwrite: true});
-            } else {
-              await move(path.join(sourceDirectory, name), path.join(destDirectory, name), {overwrite: true});
+          if (sourceDirectory === destDirectory) {
+            return;
+          }
+
+          const contents = await this.getTorrentContents(hash);
+
+          for (const content of contents) {
+            const sourcePath = sanitizePath(path.resolve(sourceDirectory, content.path));
+
+            if (!fs.existsSync(sourcePath) || !isAllowedPath(sourcePath)) {
+              continue;
+            }
+
+            const destPath = sanitizePath(path.resolve(destDirectory, content.path));
+
+            if (!isAllowedPath(destPath)) {
+              continue;
+            }
+
+            await fs.promises.mkdir(path.dirname(destPath), {recursive: true});
+
+            if (sourcePath !== destPath) {
+              await move(sourcePath, destPath, {overwrite: true});
             }
           }
+
+          await cleanupEmptyDirectories(sourceDirectory);
         }),
       );
     }
@@ -484,6 +543,12 @@ class RTorrentClientGatewayService extends ClientGatewayService {
   }
 
   async setTorrentsSequential({hashes, isSequential}: SetTorrentsSequentialOptions): Promise<void> {
+    const {methodList} = await this.availableMethodCalls;
+
+    if (!methodList.includes('d.down.sequential.set')) {
+      throw new Error('d.down.sequential.set is not supported by this rTorrent instance');
+    }
+
     const methodCalls: MultiMethodCalls = hashes.map((hash) => ({
       methodName: 'd.down.sequential.set',
       params: [hash, isSequential ? '1' : '0'],
@@ -632,9 +697,7 @@ class RTorrentClientGatewayService extends ClientGatewayService {
   }
 
   async fetchTorrentList(): Promise<TorrentListSummary> {
-    return this.clientRequestManager
-      .methodCall('d.multicall2', ['', 'main'].concat((await this.availableMethodCalls).torrentList))
-      .then(this.processClientRequestSuccess, this.processRTorrentRequestError)
+    return this.fetchTorrentListResponses()
       .then((responses: string[][]) => {
         this.emit('PROCESS_TORRENT_LIST_START');
         return Promise.all(
@@ -787,6 +850,7 @@ class RTorrentClientGatewayService extends ClientGatewayService {
   }
 
   async fetchAvailableMethodCalls(fallback = false): Promise<{
+    methodList: string[];
     clientSetting: string[];
     torrentContent: string[];
     torrentList: string[];
@@ -826,6 +890,7 @@ class RTorrentClientGatewayService extends ClientGatewayService {
         : (methodCalls: Array<string>) => methodCalls;
 
     return {
+      methodList,
       clientSetting: getAvailableMethodCalls(getMethodCalls(clientSettingMethodCallConfigs)),
       torrentContent: getAvailableMethodCalls(getMethodCalls(torrentContentMethodCallConfigs)),
       torrentList: getAvailableMethodCalls(getMethodCalls(torrentListMethodCallConfigs)),

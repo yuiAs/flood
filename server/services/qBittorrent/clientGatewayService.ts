@@ -49,7 +49,9 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
   private clientRequestManager = new ClientRequestManager(this.user.client as QBittorrentConnectionSettings);
   private cachedProperties: Record<
     string,
-    Pick<TorrentProperties, 'comment' | 'dateCreated' | 'isPrivate' | 'trackerURIs'>
+    Pick<TorrentProperties, 'comment' | 'dateCreated' | 'isPrivate' | 'trackerURIs'> & {
+      trackerMessage: string;
+    }
   > = {};
 
   async addTorrentsByFile({
@@ -121,17 +123,20 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
     }
 
     const method = isApiVersionAtLeast(await this.clientRequestManager.apiVersion, '2.11.0') ? 'stopped' : 'paused';
-    await this.clientRequestManager
-      .torrentsAddURLs(urls, {
-        savepath: destination,
-        tags: tags.join(','),
-        [method]: !start,
-        root_folder: !isBasePath,
-        contentLayout: isBasePath ? 'NoSubfolder' : undefined,
-        sequentialDownload: isSequential,
-        skip_checking: isCompleted,
-      })
-      .then(this.processClientRequestSuccess, this.processClientRequestError);
+
+    if (urls[0]) {
+      await this.clientRequestManager
+        .torrentsAddURLs(urls, {
+          savepath: destination,
+          tags: tags.join(','),
+          [method]: !start,
+          root_folder: !isBasePath,
+          contentLayout: isBasePath ? 'NoSubfolder' : undefined,
+          sequentialDownload: isSequential,
+          skip_checking: isCompleted,
+        })
+        .then(this.processClientRequestSuccess, this.processClientRequestError);
+    }
 
     if (files[0]) {
       return this.addTorrentsByFile({
@@ -363,10 +368,12 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
             const trackers = await this.clientRequestManager.getTorrentTrackers(hash).catch(() => undefined);
 
             if (properties != null && trackers != null && Array.isArray(trackers)) {
+              const firstTrackerMsg = trackers.find((t) => t.msg.length > 0)?.msg ?? '';
               this.cachedProperties[hash] = {
                 comment: properties?.comment,
                 dateCreated: properties?.creation_date,
                 isPrivate: trackers[0]?.msg.includes('is private'),
+                trackerMessage: firstTrackerMsg,
                 trackerURIs: getDomainsFromURLs(
                   trackers
                     .map((tracker) => tracker.url)
@@ -385,9 +392,11 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
                 comment = '',
                 dateCreated = 0,
                 isPrivate = false,
+                trackerMessage = '',
                 trackerURIs = [],
               } = this.cachedProperties[info.hash] || {};
 
+              const isSeeding = info.state.endsWith('UP');
               const torrentProperties: TorrentProperties = {
                 bytesDone: info.completed,
                 comment: comment,
@@ -398,12 +407,14 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
                 directory: info.save_path,
                 downRate: info.dlspeed,
                 downTotal: info.downloaded,
-                eta: info.dlspeed === 0 || info.eta >= 8640000 ? -1 : info.eta,
+                // Seeding states have ETA until seeding goal (ratio/time); show it when valid.
+                // For non-seeding states, hide ETA when dlspeed is 0 to avoid showing stale values.
+                eta: info.eta >= 8640000 || (!isSeeding && info.dlspeed === 0) ? -1 : info.eta,
                 hash: info.hash.toUpperCase(),
                 isPrivate,
                 isInitialSeeding: info.super_seeding,
                 isSequential: info.seq_dl,
-                message: '', // in tracker method
+                message: trackerMessage,
                 name: info.name,
                 peersConnected: info.num_leechs,
                 peersTotal: info.num_incomplete,
@@ -413,7 +424,7 @@ class QBittorrentClientGatewayService extends ClientGatewayService {
                 seedsConnected: info.num_seeds,
                 seedsTotal: info.num_complete,
                 sizeBytes: info.size,
-                status: getTorrentStatusFromState(info.state),
+                status: getTorrentStatusFromState(info.state, trackerMessage),
                 tags: info.tags === '' ? [] : info.tags.split(',').map((tag) => tag.trim()),
                 trackerURIs,
                 upRate: info.upspeed,

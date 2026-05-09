@@ -12,14 +12,14 @@ Flood is a modern web UI for various torrent clients (rTorrent, qBittorrent, Tra
 
 ```bash
 # After EVERY few edits (catches issues immediately):
-npm run check-types             # TypeScript compilation check - RUN THIS OFTEN!
-npm run lint                    # ESLint with TypeScript rules (max warnings: 0)
+pnpm run check-types             # TypeScript compilation check - RUN THIS OFTEN!
+pnpm run lint                    # ESLint with TypeScript rules (max warnings: 0)
 
 # Before committing any changes:
-npm run format-source           # Prettier auto-fix all files (prettier -w .)
-npm run check-source-formatting # Verify formatting is correct (prettier -c .)
-npm run build                   # Ensure production build works (panda codegen + build)
-npm test                        # Run tests to catch regressions
+pnpm run format-source           # Prettier auto-fix all files (prettier -w .)
+pnpm run check-source-formatting # Verify formatting is correct (prettier -c .)
+pnpm run build                   # Ensure production build works (panda codegen + build)
+pnpm run test                        # Run tests to catch regressions
 
 # Note: lint-staged runs automatically on git commits via Husky hooks
 ```
@@ -34,9 +34,9 @@ npm test                        # Run tests to catch regressions
 ### Recommended Development Pattern
 
 1. Make small, focused changes (< 50 lines)
-2. Run `npm run check-types` immediately
+2. Run `pnpm run check-types` immediately
 3. Fix any type errors before continuing
-4. Run `npm run lint` after each component/function
+4. Run `pnpm run lint` after each component/function
 5. Test the specific feature you changed
 6. Only then move to the next change
 
@@ -47,16 +47,16 @@ npm test                        # Run tests to catch regressions
 ```bash
 # Package Manager: pnpm (v9.7.0) is the project's package manager
 pnpm install --frozen-lockfile  # Install dependencies with lockfile
-npm run build                   # Build production (esbuild for server, webpack for client)
-npm start                       # Start production server (node --enable-source-maps dist/index.js)
-npm start -- --port 8080       # With custom options (pass args after --)
+pnpm run build                   # Build production (esbuild for server, Vite for client)
+pnpm start                       # Start production server (node --enable-source-maps dist/index.js)
+pnpm start -- --port 8080       # With custom options (pass args after --)
 ```
 
 ### Development Mode
 
 ```bash
-npm run start:development:server  # Server with tsx watch mode (hot reload via tsx watch)
-npm run start:development:client  # Client webpack-dev-server (port 4200, with Panda CSS watch)
+pnpm run start:development:server  # Server with tsx watch mode (hot reload via tsx watch)
+pnpm run start:development:client  # Client Vite dev server (port 4200, with Panda CSS watch)
 # Run both in separate terminals for full development environment
 ```
 
@@ -70,17 +70,17 @@ npm run start:development:client  # Client webpack-dev-server (port 4200, with P
 ### Testing
 
 ```bash
-npm test                        # Run all Jest integration tests (spawns real torrent clients!)
-npm test:watch                  # Watch mode with Jest
-npm test -- server/.jest/rtorrent.test.ts  # Run specific test file
-npm run test:client             # Cypress E2E tests (requires server on port 4200)
-npm run test-storybook          # Run Storybook interaction tests
+pnpm test                        # Run all Vitest integration tests (spawns real torrent clients!)
+pnpm test:watch                  # Watch mode with Vitest
+pnpm test -- --project rtorrent server/routes/api/torrents.test.ts  # Run a specific server test against rTorrent
+pnpm run test-storybook          # Run Storybook interaction tests
+pnpm run test-storybook          # Run Storybook interaction tests
 
-# Test specific torrent clients (runs relevant Jest project):
-npm test -- --selectProjects=rtorrent
-npm test -- --selectProjects=qbittorrent
-npm test -- --selectProjects=transmission
-npm test -- --selectProjects=auth
+# Test specific torrent clients (runs relevant Vitest project):
+pnpm test -- --project rtorrent
+pnpm test -- --project qbittorrent
+pnpm test -- --project transmission
+pnpm test -- --project auth
 ```
 
 ## Critical Architectural Patterns
@@ -108,11 +108,23 @@ npm test -- --selectProjects=auth
 All API endpoints use Zod schemas for validation:
 
 ```typescript
-const parsedResult = addTorrentByURLSchema.safeParse(req.body);
-if (!parsedResult.success) {
-  return res.status(422).json({message: 'Validation error.'});
-}
+fastify.route({
+  ...,
+  schema: {
+    body: RequestBodySchema,
+  },
+  ...,
+})
 ```
+
+### OpenAPI Documentation
+
+Flood provides an OpenAPI specification and interactive Swagger UI:
+
+- **OpenAPI spec**: Available at `/api/openapi.json`
+- **Swagger UI**: Interactive API documentation at `/api/docs/`
+- All endpoints are documented with Zod schemas that generate OpenAPI schemas
+- Uses `@fastify/swagger` with `fastify-type-provider-zod` for automatic schema generation
 
 ### Database: NeDB (Embedded)
 
@@ -124,7 +136,7 @@ if (!parsedResult.success) {
 ### Build Process
 
 - **Server**: esbuild bundles to single file (`dist/index.js`) with source maps
-- **Client**: webpack with code splitting, CSS extraction, asset optimization
+- **Client**: Vite with code splitting, CSS extraction, asset optimization
 - **Assets**: Static files copied to `dist/assets/`
 - **CSS**: Panda CSS generates styled-system via `panda codegen`
 
@@ -205,14 +217,9 @@ Integration tests spawn actual torrent clients:
 - SSE stream testing via PassThrough streams
 - Mocks HTTP requests with axios-mock-adapter
 
-### Fastify + Express Hybrid
+### Fastify
 
-- Fastify handles static files and main routes
-- Express middleware via `@fastify/express` for:
-  - Passport authentication
-  - Body parsing
-  - Cookie parsing
-  - API routes
+- The backends use fastify as http framework.
 
 ## Non-Obvious Implementation Details
 
@@ -264,8 +271,6 @@ For reverse proxy setups:
 
 ### Development Environment Variables
 
-- `DEV_SERVER_PORT` - webpack-dev-server port (default: 4200)
-- `DEV_SERVER_HOST` - Dev server host (default: 0.0.0.0)
 - `NODE_ENV=development` - Enables dev features
 
 ## Common Development Tasks
@@ -274,44 +279,44 @@ For reverse proxy setups:
 
 1. Create `/server/services/NewClient/` directory
 2. Implement `clientGatewayService.ts` extending `BaseService`
-   - **Run `npm run check-types`** after implementing each method
+   - **Run `pnpm run check-types`** after implementing each method
 3. Add connection settings schema in `/shared/schema/ClientConnectionSettings.ts`
-   - **Run `npm run check-types`** to verify schema integration
+   - **Run `pnpm run check-types`** to verify schema integration
 4. Update service factory in `/server/services/index.ts`
-5. **Run `npm run build`** to ensure everything compiles
-6. **Run `npm test`** to verify no regressions
+5. **Run `pnpm run build`** to ensure everything compiles
+6. **Run `pnpm test`** to verify no regressions
 
 ### Adding API Endpoint
 
 1. Define Zod schema in `/shared/schema/api/`
-   - **Run `npm run check-types`** after schema definition
+   - **Run `pnpm run check-types`** after schema definition
 2. Add route handler in `/server/routes/api/`
-   - **Run `npm run lint`** to check route implementation
+   - **Run `pnpm run lint`** to check route implementation
 3. Create action in `/client/src/javascript/actions/`
-   - **Run `npm run check-types`** to verify client-server contract
+   - **Run `pnpm run check-types`** to verify client-server contract
 4. Update TypeScript types in `/shared/types/api/`
-5. **Run `npm run build`** before testing the endpoint
-6. Test the endpoint manually, then **run `npm test`**
+5. **Run `pnpm run build`** before testing the endpoint
+6. Test the endpoint manually, then **run `pnpm test`**
 
 ### Modifying Torrent Properties
 
 1. Update type in `/shared/types/Torrent.ts`
-   - **Run `npm run check-types`** immediately - this affects many files!
+   - **Run `pnpm run check-types`** immediately - this affects many files!
 2. Fix all TypeScript errors before proceeding
 3. Modify normalizers in each client's `torrentPropertiesUtil.ts`
-   - **Run `npm run check-types`** after each client adapter
+   - **Run `pnpm run check-types`** after each client adapter
 4. Update torrent list columns if needed
-5. **Run `npm run build`** to verify production build
-6. **Run `npm test`** to ensure client adapters still work
+5. **Run `pnpm run build`** to verify production build
+6. **Run `pnpm test`** to ensure client adapters still work
 
 ## Debugging Tips
 
 ### When Things Go Wrong
 
-- **TypeScript errors?** Run `npm run check-types` and fix from top to bottom
-- **Lint errors?** Run `npm run lint` - most are auto-fixable with `npm run format-source`
-- **Build fails?** Check both server (esbuild) and client (webpack) output
-- **Tests fail?** Run specific test file with `npm test -- path/to/test`
+- **TypeScript errors?** Run `pnpm run check-types` and fix from top to bottom
+- **Lint errors?** Run `pnpm run lint` - most are auto-fixable with `pnpm run format-source`
+- **Build fails?** Check both server (esbuild) and client (Vite) output
+- **Tests fail?** Run specific test file with `pnpm test -- path/to/test`
 - **Panda CSS issues?** Run `panda codegen` to regenerate styled-system
 
 ### Runtime Debugging
@@ -344,7 +349,7 @@ For reverse proxy setups:
 ```bash
 # Start both for full development:
 npm run start:development:server  # Backend on port 3000 (tsx watch mode)
-npm run start:development:client  # Frontend on port 4200 (webpack-dev-server)
+pnpm run start:development:client  # Frontend on port 4200 (Vite dev server)
 
 # Frontend proxies API calls to backend (configurable):
 npm run start:development:client -- --proxy http://localhost:3000
@@ -370,21 +375,33 @@ npm run test-storybook          # Run Storybook tests
 
 - Stories located in `client/src/javascript/components/**/*.stories.tsx`
 - Webpack aliases configured for `@client/` and `@shared/` paths
-- Full CSS module support matching production webpack config
+- Full CSS module support matching production Vite config
 - Babel decorators enabled for MobX compatibility
 
 ### Frontend Mocking Strategy
 
-#### 1. Action Mocking via Webpack NormalModuleReplacementPlugin
+#### 1. Action Mocking via Vite Plugin
 
-Storybook replaces real actions with mocks at build time:
+Storybook replaces real actions with mocks at build time using a custom Vite plugin in `.storybook/main.ts`:
 
 ```typescript
 // In .storybook/main.ts
-new webpack.NormalModuleReplacementPlugin(
-  /@client\/actions\/FloodActions$/,
-  path.resolve(__dirname, './mocks/FloodActions.ts'),
-);
+{
+  name: 'storybook-mock-action-modules',
+  enforce: 'pre',
+  resolveId(id: string, _importer: string | undefined) {
+    // Intercept @client/actions/* imports and redirect to mocks
+    const cleanId = id.split('?')[0];
+    for (const moduleName of MOCKED_ACTION_MODULES) {
+      const aliasPath = `@client/actions/${moduleName}`;
+      const realPath = path.resolve(realActionsDir, `${moduleName}.ts`);
+      if (cleanId === aliasPath || cleanId === realPath) {
+        return path.resolve(mockDir, `${moduleName}.ts`);
+      }
+    }
+    return undefined;
+  },
+}
 ```
 
 This ensures all imports of actions are replaced with mock implementations.
@@ -525,6 +542,6 @@ class Store {
 ## Final Reminders
 
 1. **Small changes, frequent validation** - This codebase has strict TypeScript
-2. **Run `npm run check-types` after every change** - Seriously, every change
+2. **Run `pnpm run check-types` after every change** - Seriously, every change
 3. **CI will reject your PR** if lint/types/tests fail
 4. **When in doubt, validate** - Better to check too often than debug for hours

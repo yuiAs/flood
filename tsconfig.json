@@ -2,10 +2,10 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "sourceMap": true,
-    "target": "esnext",
+    "target": "es2022",
     "moduleResolution": "Bundler",
     "allowJs": true,
-    "module": "esnext",
+    "module": "es2022",
     "noEmit": true,
     "strict": true,
     "isolatedModules": true,
@@ -16,11 +16,12 @@
     "useUnknownInCatchVariables": false,
     "baseUrl": "./",
     "paths": {
+      "@client/storybook-mocks/*": [".storybook/mocks/*"],
       "@client/*": ["client/src/javascript/*"],
       "@server/*": ["server/*"],
       "@shared/*": ["shared/*"]
     }
   },
-  "include": ["./**/*.ts", "./**/*.tsx", "./.storybook/**/*.ts", "./.storybook/**/*.tsx"],
+  "include": ["./**/*.ts", "./**/*.mts", "./**/*.tsx", "./.storybook/**/*.ts", "./.storybook/**/*.tsx"],
   "exclude": ["node_modules", "cypress", "dist"]
 }
