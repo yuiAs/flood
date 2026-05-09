@@ -41,7 +41,7 @@ services:
     # Bind to localhost only — front this with a reverse proxy if exposing
     # beyond the host. Drop the 127.0.0.1: prefix to publish on all interfaces.
     ports:
-      - "127.0.0.1:3000:3000"
+      - '3000:3000'
 
     command:
       - --port=3000

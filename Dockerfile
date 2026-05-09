@@ -24,10 +24,13 @@ FROM ${NODE_IMAGE} AS runtime
 WORKDIR /usr/src/app
 
 # mediainfo: optional dependency used by Flood for media file inspection.
+# coreutils: server/util/diskUsageUtil.ts (Linux branch) shells out to `df`
+# with GNU-only flags (`--exclude-type=...`); Alpine's BusyBox df rejects
+# them and disk usage updates fail.
 # The `node` user (uid/gid 1000) already exists in the base image, which is
 # convenient: it matches the PUID/PGID 1000 the rtorrent container expects,
 # so files written by either side share ownership on the host.
-RUN apk --no-cache add mediainfo
+RUN apk --no-cache add mediainfo coreutils
 
 # esbuild bundles the server into dist/index.js with `geoip-country` left
 # external, so node_modules is still required at runtime.
